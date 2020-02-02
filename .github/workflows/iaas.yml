@@ -1,0 +1,113 @@
+name: issue as a service
+on:
+  issues:
+    types: [opened, edited, labeled]
+  issue_comment:
+    types: [created, edited, labeled]
+
+jobs:
+  permission:
+    name: permission check
+    runs-on: ubuntu-latest
+    if: github.actor == github.event.repository.owner.login
+    steps:
+    - name: check permission
+      run: echo permission pass
+  debug:
+    name: _debug
+    needs: permission
+    runs-on: ubuntu-latest
+    if: contains(github.event.issue.labels.*.name, 'debug')
+    steps:
+    - name: context
+      env:
+        GITHUB_CONTEXT: ${{ toJson(github) }}
+      run: echo "$GITHUB_CONTEXT"
+  issue-auto-label:
+    name: issues auto label
+    needs: permission
+    runs-on: ubuntu-latest
+    if: |
+        github.event_name == 'issues' && (github.event.action == 'opened' || github.event.action == 'edited') && startsWith(github.event.issue.title, 'iaas')
+    steps:
+    - uses: actions/github-script@0.4.0
+      with:
+        github-token: ${{ secrets.GITHUB_TOKEN }}
+        script: |
+          github.issues.addLabels({
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            issue_number: context.issue.number,
+            labels: ['iaas']
+          })
+  issue:
+    name: issue execute
+    needs: permission
+    runs-on: ubuntu-latest
+    if: | 
+        github.event_name == 'issues' && contains(github.event.issue.labels.*.name, 'iaas')
+    steps:
+    - uses: actions/checkout@master
+    - name: shell
+      env:
+        BODY_CONTENT: ${{ github.event.issue.body }}
+      run: |
+        cat <<'EOF' > execute.txt
+        ${{ github.event.issue.body }}
+        EOF
+        sed -i 's/\r//g' execute.txt
+        echo '#!/bin/sh -l' > execute.sh
+        python3 code.py >> execute.sh
+        shellcheck execute.sh
+        bash -e execute.sh
+    - name: upload-artifact
+      uses: actions/upload-artifact@master
+      with:
+        name: artifact
+        path: ./
+    - uses: actions/github-script@0.4.0
+      with:
+        github-token: ${{ secrets.GITHUB_TOKEN }}
+        script: |
+          github.issues.createComment({
+            issue_number: context.issue.number,
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            body: 'comment job: ${{ github.event.issue.html_url }} -> [actions/runs](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})'
+          })
+
+  issue_comment:
+    name: issue_comment execute
+    needs: permission
+    runs-on: ubuntu-latest
+    if: |
+        github.event_name == 'issue_comment' && contains(github.event.issue.labels.*.name, 'iaas')
+    steps:
+    - uses: actions/checkout@master
+    - name: shell
+      env:
+        BODY_CONTENT: ${{ github.event.comment.body }}
+      run: |
+        cat <<'EOF' > execute.txt
+        ${{ github.event.comment.body }}
+        EOF
+        sed -i 's/\r//g' execute.txt
+        echo '#!/bin/sh -l' > execute.sh
+        python3 code.py >> execute.sh
+        shellcheck execute.sh
+        bash -e execute.sh
+    - name: upload-artifact
+      uses: actions/upload-artifact@master
+      with:
+        name: artifact
+        path: ./
+    - uses: actions/github-script@0.4.0
+      with:
+        github-token: ${{ secrets.GITHUB_TOKEN }}
+        script: |
+          github.issues.createComment({
+            issue_number: context.issue.number,
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            body: 'comment job: ${{ github.event.comment.html_url }} -> [actions/runs](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})'
+          })
